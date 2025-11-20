@@ -54,7 +54,7 @@ const handleLogout = async () => {
     // Delay to show alert
     setTimeout(() => {
       // Remove token & clear user AFTER alert
-      localStorage.removeItem("accessToken");
+    window.accessToken = null; // clear token from memory
       setAlert(false); // hide alert
       navigate("/login", { replace: true });
     }, 2000);

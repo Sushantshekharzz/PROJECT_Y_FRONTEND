@@ -52,7 +52,8 @@ const Login = () => {
       setAlert(true);
 
       if (res.status === 200) {
-        localStorage.setItem("accessToken", res.data.accessToken);
+        window.accessToken = res.data.accessToken; // store token in memory for Axios
+        console.log("window.accessToken",window.accessToken)
         setUser(res.data.user);
         setTimeout(() => {
           navigate("/ingestion");

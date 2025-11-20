@@ -15,8 +15,9 @@ import ProtectedLayout from "./layout/ProtectedLayout";
 
 function App() {
   return (
-    <AuthProvider>
       <Router>
+            <AuthProvider>
+
         <Routes>
           {/* Public routes (no Navbar) */}
           <Route element={<PublicLayout />}>
@@ -42,8 +43,9 @@ function App() {
           <Route path="/unauthorized" element={<Unauthorized />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+            </AuthProvider>
+
       </Router>
-    </AuthProvider>
   );
 }
 

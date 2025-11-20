@@ -1,5 +1,5 @@
 import { createContext, useState, useEffect } from "react";
-import api from "../api/axios";
+import { useLocation, useNavigate } from "react-router-dom";
 import { refreshToken } from "../api/auth";
 
 export const AuthContext = createContext();
@@ -7,36 +7,35 @@ export const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const location = useLocation();
+  const navigate = useNavigate();
 
-useEffect(() => {
-    // List of protected routes
-    const protectedRoutes = ["/ingestion", "/cleaning", "/transformation", "/visualization"];
-    const currentPath = window.location.pathname.toLowerCase();
+  const protectedRoutes = ["/ingestion", "/cleaning", "/transformation", "/visualization"];
+
+  useEffect(() => {
+    const currentPath = location.pathname.toLowerCase();
 
     if (!protectedRoutes.includes(currentPath)) {
-      // Public route → skip refreshToken
       setLoading(false);
       return;
     }
 
     const loadUser = async () => {
+      setLoading(true);
       try {
-        const res = await refreshToken();
+        const res = await refreshToken(); // uses httpOnly cookie
         setUser(res.data.user);
-        console.log("rrrr",res)
-        localStorage.setItem("accessToken", res.data.accessToken);
+        window.accessToken = res.data.accessToken; // store token in memory
       } catch (err) {
         setUser(null);
-        navigate("/login"); // immediately redirect if not authenticated
-
-        console.error("User not authenticated", err);
+        navigate("/login");
       } finally {
         setLoading(false);
       }
     };
 
     loadUser();
-  }, []);
+  }, [location.pathname, navigate]);
 
   return (
     <AuthContext.Provider value={{ user, setUser, loading }}>
