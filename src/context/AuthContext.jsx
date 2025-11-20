@@ -27,6 +27,8 @@ useEffect(() => {
         localStorage.setItem("accessToken", res.data.accessToken);
       } catch (err) {
         setUser(null);
+        navigate("/login"); // immediately redirect if not authenticated
+
         console.error("User not authenticated", err);
       } finally {
         setLoading(false);

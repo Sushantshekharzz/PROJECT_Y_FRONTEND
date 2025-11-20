@@ -32,36 +32,38 @@ import {
   getAllExcels,
   updateExcel,
   deleteExcel,
-} from "../api/excel";
+} from "../api/excelUpload";
 import { AuthContext } from "../context/AuthContext";
 import CustomAlert from "../components/CustomAlert";
 
-// Helper: deep copy
 const deepCopy = (obj) =>
   typeof structuredClone === "function"
     ? structuredClone(obj)
     : JSON.parse(JSON.stringify(obj));
 
+const excelDateToJSDate = (excelDate) => {
+  if (excelDate == null || excelDate === "" || isNaN(excelDate)) return excelDate;
+  const date = new Date(Math.round((excelDate - 25569) * 86400 * 1000));
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = date.getUTCFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+};
+
 export default function Ingestion() {
   const { user } = useContext(AuthContext);
-
   const [excelList, setExcelList] = useState([]);
   const [alert, setAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
   const [statusCode, setStatusCode] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  // Upload section
   const [uploadData, setUploadData] = useState([]);
   const [uploadEdit, setUploadEdit] = useState([]);
   const [uploadFileName, setUploadFileName] = useState("");
   const [showUpload, setShowUpload] = useState(false);
   const [uploadEditing, setUploadEditing] = useState(false);
+  const [openedExcels, setOpenedExcels] = useState({});
 
-  // Opened excels (multiple)
-  const [openedExcels, setOpenedExcels] = useState({}); // {id: {data, headers, editData, isEditing}}
-
-  // Fetch all Excel uploads
   useEffect(() => {
     const fetchExcels = async () => {
       try {
@@ -82,7 +84,6 @@ export default function Ingestion() {
     setAlert(true);
   };
 
-  // ---------- UPLOAD SECTION ----------
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -95,9 +96,8 @@ export default function Ingestion() {
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
 
-      if (jsonData.length === 0) return showAlert("❌ Excel file is empty." , 500);
+      if (jsonData.length === 0) return showAlert("❌ Excel file is empty.", 500);
 
-      // Normalize row lengths
       const headerLength = jsonData[0].length;
       const normalizedData = jsonData.map((row) => {
         const newRow = [...row];
@@ -105,24 +105,28 @@ export default function Ingestion() {
         return newRow;
       });
 
-      // Remove empty rows
       const cleanedData = normalizedData.filter((row) =>
         row.some((cell) => cell && cell.toString().trim() !== "")
       );
 
-      setUploadData(deepCopy(cleanedData));
-      setUploadEdit(deepCopy(cleanedData));
+      const convertedData = cleanedData.map((row) =>
+        row.map((cell) => {
+          if (!isNaN(cell) && cell > 40000) return excelDateToJSDate(cell);
+          return cell;
+        })
+      );
+
+      setUploadData(deepCopy(convertedData));
+      setUploadEdit(deepCopy(convertedData));
       showAlert("✅ File loaded successfully.");
     };
     reader.readAsBinaryString(file);
   };
 
   const handleUploadCellChange = (r, c, val) => {
-    console.log("rrrr")
     const newData = uploadEdit.map((row, i) => (i === r ? [...row] : row));
     newData[r][c] = val;
     setUploadEdit(newData);
-   
   };
 
   const handleUploadRevert = () => {
@@ -144,7 +148,9 @@ export default function Ingestion() {
       const [headers, ...rows] = uploadData;
       const formatted = rows.map((row) =>
         headers.reduce((acc, h, i) => {
-          acc[h] = row[i] ?? "";
+          let val = row[i] ?? "";
+          if (!isNaN(val) && val > 40000) val = excelDateToJSDate(val);
+          acc[h] = val;
           return acc;
         }, {})
       );
@@ -152,10 +158,9 @@ export default function Ingestion() {
         Object.values(row).some((v) => v && v.toString().trim() !== "")
       );
 
-      // ✅ Include headers in request
-     const res  =  await uploadExcel({ fileName: uploadFileName, data: cleaned, headers });
+      const res = await uploadExcel({ fileName: uploadFileName, data: cleaned, headers });
 
-      showAlert(res.data.message || "✅ Upload successful!" , res.status || 200);
+      showAlert(res.data.message || "✅ Upload successful!", res.status || 200);
       const refreshed = await getAllExcels();
       const uploads = refreshed?.data?.uploads || refreshed?.uploads || [];
       setExcelList(Array.isArray(uploads) ? uploads : []);
@@ -165,18 +170,22 @@ export default function Ingestion() {
       setUploadEdit([]);
     } catch (err) {
       console.error(err);
-      showAlert(err.response.data.message || "❌ Upload failed.", err.status || 500);
+      showAlert(err.response?.data?.message || "❌ Upload failed.", err.status || 500);
     } finally {
       setLoading(false);
     }
   };
 
-  // ---------- EXISTING EXCEL SECTION ----------
   const handleOpenExcel = (excel) => {
     const headers = excel.headers || Object.keys(excel.data[0] || {});
-    const rows = excel.data.map((row) => headers.map((h) => row[h] ?? ""));
+    const rows = excel.data.map((row) =>
+      headers.map((h) => {
+        let val = row[h] ?? "";
+        if (!isNaN(val) && val > 40000) val = excelDateToJSDate(val);
+        return val;
+      })
+    );
     const sheet = [headers, ...rows];
-
     setOpenedExcels((prev) => ({
       ...prev,
       [excel.id]: {
@@ -184,7 +193,7 @@ export default function Ingestion() {
         data: deepCopy(sheet),
         editData: deepCopy(sheet),
         isEditing: false,
-         isChanged: false,
+        isChanged: false,
         headers,
       },
     }));
@@ -202,7 +211,7 @@ export default function Ingestion() {
     setOpenedExcels((prev) => {
       const excel = deepCopy(prev[id]);
       excel.editData[r][c] = val;
-      excel.isChanged = true; // ✅ mark this Excel as changed
+      excel.isChanged = true;
       return { ...prev, [id]: excel };
     });
   };
@@ -222,87 +231,68 @@ export default function Ingestion() {
       const excel = deepCopy(prev[id]);
       excel.data = deepCopy(excel.editData);
       excel.isEditing = false;
-       // detect change
-  
-    excel.isChanged = true; // ✅ store locally
+      excel.isChanged = true;
       return { ...prev, [id]: excel };
     });
     showAlert("✅ Changes confirmed.");
-   
   };
 
-const handleUpdateExistingToDB = async (id) => {
-  const excel = openedExcels[id];
-  if (!excel) return;
-  setLoading(true);
-
-  try {
-    const [headers, ...rows] = excel.data;
-    const formatted = rows.map((row) =>
-      headers.reduce((acc, h, i) => {
-        acc[h] = row[i] ?? "";
-        return acc;
-      }, {})
-    );
-
-    // ✅ Send update to backend
-   const res  =  await updateExcel(id, { data: formatted, headers });
-
-    // ✅ Re-fetch all Excels to get updated one
-    const refreshed = await getAllExcels();
-    const uploads = refreshed?.data?.uploads || refreshed?.uploads || [];
-    setExcelList(Array.isArray(uploads) ? uploads : []);
-        setOpenedExcels((prev) => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        isChanged: false,
-      },
-    }));
-            handleCloseExcel(id); // 👈 CLOSE the updated Excel automatically
-
-
-
-    // ✅ Optionally re-open the updated file with latest data
-          showAlert(res.data.message || "✅ Excel updated successfully!" , res.status || 200);
-
-
-  } catch (err) {
-    console.error(err);
-    showAlert(err.response.data.message || "❌ Update failed.", err.status || 500);
-  } finally {
-    setLoading(false);
-  }
-};
-
-  const handleDelete = async (id) => {
+  const handleUpdateExistingToDB = async (id) => {
+    const excel = openedExcels[id];
+    if (!excel) return;
+    setLoading(true);
     try {
-     const res  =  await deleteExcel(id);
-      setExcelList(excelList.filter((x) => x.id !== id));
-                showAlert(res.data.message || "🗑️ Deleted successfully!" , res.status || 200);
-
+      const [headers, ...rows] = excel.data;
+      const formatted = rows.map((row) =>
+        headers.reduce((acc, h, i) => {
+          let val = row[i] ?? "";
+          if (!isNaN(val) && val > 40000) val = excelDateToJSDate(val);
+          acc[h] = val;
+          return acc;
+        }, {})
+      );
+      const res = await updateExcel(id, { data: formatted, headers });
+      const refreshed = await getAllExcels();
+      const uploads = refreshed?.data?.uploads || refreshed?.uploads || [];
+      setExcelList(Array.isArray(uploads) ? uploads : []);
+      setOpenedExcels((prev) => ({
+        ...prev,
+        [id]: {
+          ...prev[id],
+          isChanged: false,
+        },
+      }));
+      handleCloseExcel(id);
+      showAlert(res.data.message || "✅ Excel updated successfully!", res.status || 200);
     } catch (err) {
       console.error(err);
-      showAlert(err.response.data.message || "❌ Error deleting.", err.status || 500);
+      showAlert(err.response?.data?.message || "❌ Update failed.", err.status || 500);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // ---------- UI ----------
+  const handleDelete = async (id) => {
+    try {
+      const res = await deleteExcel(id);
+      setExcelList(excelList.filter((x) => x.id !== id));
+      showAlert(res.data.message || "🗑️ Deleted successfully!", res.status || 200);
+    } catch (err) {
+      console.error(err);
+      showAlert(err.response?.data?.message || "❌ Error deleting.", err.status || 500);
+    }
+  };
+
   return (
-    <Box sx={{ minHeight: "100vh", bgcolor: "#f8f9fb", p: 3 }}>
-      {alert && (
-        <CustomAlert
-          setAlert={setAlert}
-          message={alertMessage}
-          statusCode={statusCode}
-        />
-      )}
+    <Box sx={{ minHeight: "100vh", bgcolor: "#f8f9fb", p: { xs: 1, sm: 3 } }}>
+      {alert && <CustomAlert setAlert={setAlert} message={alertMessage} statusCode={statusCode} />}
 
       <Stack
-        direction="row"
+        direction={{ xs: "column", sm: "row" }}
         justifyContent="space-between"
-        alignItems="center"
+        alignItems={{ xs: "stretch", sm: "center" }}
         mb={3}
+        spacing={1}
       >
         <Typography variant="h4" fontWeight={600}>
           Excel Data Management
@@ -312,6 +302,7 @@ const handleUpdateExistingToDB = async (id) => {
             startIcon={<AddCircleOutlineIcon />}
             variant="contained"
             onClick={() => setShowUpload(true)}
+            fullWidth={{ xs: true, sm: false }}
           >
             Add Excel
           </Button>
@@ -325,6 +316,7 @@ const handleUpdateExistingToDB = async (id) => {
               setUploadFileName("");
               setUploadData([]);
             }}
+            fullWidth={{ xs: true, sm: false }}
           >
             Cancel
           </Button>
@@ -336,31 +328,23 @@ const handleUpdateExistingToDB = async (id) => {
         <Box
           sx={{
             bgcolor: "#fff",
-            p: 3,
+            p: { xs: 2, sm: 3 },
             mb: 3,
             borderRadius: 3,
             boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
+            overflowX: "auto",
           }}
         >
           <Typography variant="h6" mb={2}>
             Upload New Excel
           </Typography>
-          <Stack direction="row" spacing={2} alignItems="center" mb={2}>
-            <Button
-              variant="contained"
-              component="label"
-              startIcon={<UploadFileIcon />}
-            >
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center" mb={2}>
+            <Button variant="contained" component="label" startIcon={<UploadFileIcon />}>
               Choose File
-              <input
-                type="file"
-                hidden
-                accept=".xlsx,.xls,.csv"
-                onChange={handleFileUpload}
-              />
+              <input type="file" hidden accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
             </Button>
             {uploadFileName && (
-              <Typography>
+              <Typography sx={{ wordBreak: "break-word" }}>
                 Selected File: <b>{uploadFileName}</b>
               </Typography>
             )}
@@ -368,7 +352,13 @@ const handleUpdateExistingToDB = async (id) => {
 
           {uploadData.length > 0 && (
             <>
-              <Stack direction="row" spacing={2} mb={2} justifyContent="center">
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={2}
+                mb={2}
+                justifyContent="center"
+                flexWrap="wrap"
+              >
                 {!uploadEditing ? (
                   <Button
                     startIcon={<EditIcon />}
@@ -404,15 +394,11 @@ const handleUpdateExistingToDB = async (id) => {
                   startIcon={<CloudUploadIcon />}
                   onClick={handleUploadToDB}
                 >
-                  {loading ? (
-                    <CircularProgress size={22} color="inherit" />
-                  ) : (
-                    "Upload to DB"
-                  )}
+                  {loading ? <CircularProgress size={22} color="inherit" /> : "Upload to DB"}
                 </Button>
               </Stack>
 
-              <TableContainer component={Paper} sx={{ maxHeight: 400 }}>
+              <TableContainer component={Paper} sx={{ overflowX: "auto", maxHeight: 400 }}>
                 <Table stickyHeader size="small">
                   <TableHead sx={{ bgcolor: "#1976d2" }}>
                     <TableRow>
@@ -429,18 +415,13 @@ const handleUpdateExistingToDB = async (id) => {
                       .map((r, ri) => (
                         <TableRow key={ri}>
                           {r.map((cell, ci) => (
-                            <TableCell key={ci}>
+                            <TableCell key={ci} sx={{ minWidth: 100 }}>
                               {uploadEditing ? (
                                 <TextField
                                   variant="standard"
                                   value={cell || ""}
-                                  onChange={(e) =>
-                                    handleUploadCellChange(
-                                      ri + 1,
-                                      ci,
-                                      e.target.value
-                                    )
-                                  }
+                                  onChange={(e) => handleUploadCellChange(ri + 1, ci, e.target.value)}
+                                  fullWidth
                                 />
                               ) : (
                                 cell
@@ -462,38 +443,31 @@ const handleUpdateExistingToDB = async (id) => {
         Uploaded Files
       </Typography>
       {excelList.length === 0 ? (
-        <Typography color="text.secondary">
-          No files uploaded yet.
-        </Typography>
+        <Typography color="text.secondary">No files uploaded yet.</Typography>
       ) : (
         <Stack spacing={2}>
           {excelList.map((excel) => (
             <React.Fragment key={excel.id}>
-              <Card
-                sx={{
-                  border: openedExcels[excel.id] && "2px solid #1976d2",
-                  borderRadius: 2,
-                }}
-              >
+              <Card sx={{ border: openedExcels[excel.id] && "2px solid #1976d2", borderRadius: 2 }}>
                 <CardContent
                   sx={{
                     display: "flex",
+                    flexDirection: { xs: "column", sm: "row" },
                     justifyContent: "space-between",
                     alignItems: "center",
+                    gap: 1,
                   }}
                 >
                   <Stack direction="row" alignItems="center" spacing={2}>
                     <DescriptionIcon color="primary" />
-                    <Typography>{excel.fileName}</Typography>
+                    <Typography sx={{ wordBreak: "break-word" }}>{excel.fileName}</Typography>
                   </Stack>
-                  <Stack direction="row" spacing={1}>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
                     <Button
                       size="small"
                       variant="outlined"
                       onClick={() =>
-                        openedExcels[excel.id]
-                          ? handleCloseExcel(excel.id)
-                          : handleOpenExcel(excel)
+                        openedExcels[excel.id] ? handleCloseExcel(excel.id) : handleOpenExcel(excel)
                       }
                     >
                       {openedExcels[excel.id] ? "Close" : "Open"}
@@ -510,21 +484,22 @@ const handleUpdateExistingToDB = async (id) => {
                 </CardContent>
               </Card>
 
-              {/* Inline opened Excel */}
               {openedExcels[excel.id] && (
                 <Box
                   sx={{
                     bgcolor: "#fff",
-                    p: 3,
+                    p: { xs: 1, sm: 3 },
                     borderRadius: 3,
                     boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
+                    overflowX: "auto",
                   }}
                 >
                   <Stack
-                    direction="row"
+                    direction={{ xs: "column", sm: "row" }}
                     spacing={2}
-                    justifyContent="center"
                     mb={2}
+                    justifyContent="center"
+                    flexWrap="wrap"
                   >
                     {!openedExcels[excel.id].isEditing ? (
                       <Button
@@ -533,10 +508,7 @@ const handleUpdateExistingToDB = async (id) => {
                         onClick={() =>
                           setOpenedExcels((prev) => ({
                             ...prev,
-                            [excel.id]: {
-                              ...prev[excel.id],
-                              isEditing: true,
-                            },
+                            [excel.id]: { ...prev[excel.id], isEditing: true },
                           }))
                         }
                       >
@@ -566,23 +538,23 @@ const handleUpdateExistingToDB = async (id) => {
                       startIcon={<CloudUploadIcon />}
                       variant="contained"
                       color="secondary"
-                      disabled={loading || openedExcels[excel.id].isEditing ||!openedExcels[excel.id].isChanged}
+                      disabled={
+                        loading ||
+                        openedExcels[excel.id].isEditing ||
+                        !openedExcels[excel.id].isChanged
+                      }
                       onClick={() => handleUpdateExistingToDB(excel.id)}
                     >
-                      {loading ? (
-                        <CircularProgress size={22} color="inherit" />
-                      ) : (
-                        "Update DB"
-                      )}
+                      {loading ? <CircularProgress size={22} color="inherit" /> : "Update DB"}
                     </Button>
                   </Stack>
 
-                  <TableContainer component={Paper} sx={{ maxHeight: 500 }}>
+                  <TableContainer component={Paper} sx={{ overflowX: "auto", maxHeight: 500 }}>
                     <Table stickyHeader size="small">
                       <TableHead sx={{ bgcolor: "#1976d2" }}>
                         <TableRow>
                           {openedExcels[excel.id].data[0].map((h, i) => (
-                            <TableCell key={i} sx={{ fontWeight: "bold" }}>
+                            <TableCell key={i} sx={{ fontWeight: "bold", minWidth: 100 }}>
                               {h}
                             </TableCell>
                           ))}
@@ -597,19 +569,15 @@ const handleUpdateExistingToDB = async (id) => {
                           .map((r, ri) => (
                             <TableRow key={ri}>
                               {r.map((cell, ci) => (
-                                <TableCell key={ci}>
+                                <TableCell key={ci} sx={{ minWidth: 100 }}>
                                   {openedExcels[excel.id].isEditing ? (
                                     <TextField
                                       variant="standard"
                                       value={cell || ""}
                                       onChange={(e) =>
-                                        handleOpenCellChange(
-                                          excel.id,
-                                          ri + 1,
-                                          ci,
-                                          e.target.value
-                                        )
+                                        handleOpenCellChange(excel.id, ri + 1, ci, e.target.value)
                                       }
+                                      fullWidth
                                     />
                                   ) : (
                                     cell
