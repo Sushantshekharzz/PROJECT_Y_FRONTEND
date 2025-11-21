@@ -35,7 +35,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     loadUser();
-  }, [location.pathname, navigate]);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, setUser, loading }}>
