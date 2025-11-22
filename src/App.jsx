@@ -10,7 +10,7 @@ import Cleaning from "./pages/Cleaning";
 import Transformation from "./pages/Transformation";
 import Visualization from "./pages/Visualization";
 
-import PublicLayout from "./layout/Publiclayout";
+import PublicLayout from "./layout/PublicLayout";
 import ProtectedLayout from "./layout/ProtectedLayout";
 
 function App() {
