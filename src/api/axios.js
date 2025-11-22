@@ -13,7 +13,11 @@ const processQueue = (error, token = null) => {
 };
 
 const api = axios.create({
-  baseURL: "http://localhost:5000/api",
+  // local url
+  // baseURL: "http://localhost:5000/api",
+  // prod url
+    baseURL: "http://65.0.203.154:5000/api",
+
   withCredentials: true,
 });
 
@@ -45,7 +49,10 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const res = await axios.post("http://localhost:5000/api/auth/refresh_token", {}, { withCredentials: true });
+        // local url
+        // const res = await axios.post("http://localhost:5000/api/auth/refresh_token", {}, { withCredentials: true });
+        // prod url
+        const res = await axios.post("http://65.0.203.154:5000/api/auth/refresh_token", {}, { withCredentials: true });
         window.accessToken = res.data.accessToken; // store in memory
         processQueue(null, res.data.accessToken);
         originalRequest.headers.Authorization = `Bearer ${res.data.accessToken}`;
